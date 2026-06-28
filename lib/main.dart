@@ -16,8 +16,9 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'TuS Dornberg Cash',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF4CAF50)), // Sanftes Grün
         useMaterial3: true,
       ),
       home: const MainNavigationPage(),
@@ -45,8 +46,21 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('TuS Dornberg Cash'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        title: Row(
+          children: [
+            Image.asset(
+              'web/assets/logo.png',
+              height: 40,
+              errorBuilder: (context, error, stackTrace) => const Icon(Icons.money),
+            ),
+            const SizedBox(width: 12),
+            const Text(
+              'TuS Dornberg Cash',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        backgroundColor: const Color(0xFFA5D6A7), // Sanftes Grün
       ),
       body: _pages[_selectedIndex],
       bottomNavigationBar: BottomNavigationBar(
@@ -80,7 +94,7 @@ class _KassePageState extends State<KassePage> {
   DateTime _startDate = DateTime(DateTime.now().year, 6, 1);
   DateTime _endDate = DateTime(DateTime.now().year + 1, 5, 31);
   
-  // For monthly filtering: null means "Gesamt", otherwise store the specific start of the month
+  // For monthly filtering: null means "Gesamt"
   DateTime? _selectedMonthStart;
 
   @override
@@ -91,22 +105,27 @@ class _KassePageState extends State<KassePage> {
 
   Future<void> _loadAllData() async {
     setState(() => _isLoading = true);
-    final people = await GoogleSheetsService.getPeople();
-    final transactions = await GoogleSheetsService.getTransactions();
-    final penalties = await GoogleSheetsService.getPenalties();
-    final settings = await GoogleSheetsService.getSettings();
+    try {
+      final people = await GoogleSheetsService.getPeople();
+      final transactions = await GoogleSheetsService.getTransactions();
+      final penalties = await GoogleSheetsService.getPenalties();
+      final settings = await GoogleSheetsService.getSettings();
 
-    if (settings.containsKey('seasonStart') && settings.containsKey('seasonEnd')) {
-      _startDate = DateTime.parse(settings['seasonStart']!);
-      _endDate = DateTime.parse(settings['seasonEnd']!);
+      if (settings.containsKey('seasonStart') && settings.containsKey('seasonEnd')) {
+        _startDate = DateTime.parse(settings['seasonStart']!);
+        _endDate = DateTime.parse(settings['seasonEnd']!);
+      }
+
+      setState(() {
+        _people = people;
+        _transactions = transactions;
+        _penalties = penalties;
+        _isLoading = false;
+      });
+    } catch (e) {
+      print('Fehler beim Laden der Daten: $e');
+      setState(() => _isLoading = false);
     }
-
-    setState(() {
-      _people = people;
-      _transactions = transactions;
-      _penalties = penalties;
-      _isLoading = false;
-    });
   }
 
   void _showSeasonSettings() async {
@@ -128,28 +147,31 @@ class _KassePageState extends State<KassePage> {
   }
 
   double _calculateBalance(String personId) {
-    return _transactions
-        .where((t) => t.personId == personId)
-        .where((t) {
-          if (_selectedMonthStart != null) {
-            final nextMonth = DateTime(_selectedMonthStart!.year, _selectedMonthStart!.month + 1, 1);
-            return t.date.isAtSameMomentAs(_selectedMonthStart!) || 
-                   (t.date.isAfter(_selectedMonthStart!) && t.date.isBefore(nextMonth));
-          }
-          // Default: Season range
-          return t.date.isAfter(_startDate.subtract(const Duration(days: 1))) &&
-                 t.date.isBefore(_endDate.add(const Duration(days: 1)));
-        })
-        .fold(0.0, (sum, t) => sum + t.amount);
+    // Debug: Check transactions for this person
+    final personTransactions = _transactions.where((t) => t.personId == personId).toList();
+    
+    return personTransactions.where((t) {
+      if (_selectedMonthStart != null) {
+        // Filter for specific month
+        return t.date.year == _selectedMonthStart!.year && 
+               t.date.month == _selectedMonthStart!.month;
+      }
+      // Season filter: use atMost precision (compare only year/month/day if needed)
+      // Transactions are stored as DateTime.now(), so they should be within season
+      return t.date.isAfter(_startDate.subtract(const Duration(seconds: 1))) &&
+             t.date.isBefore(_endDate.add(const Duration(days: 1)));
+    }).fold(0.0, (sum, t) => sum + t.amount);
   }
 
-  // Generates months based on season start
   List<DateTime> _getSeasonMonths() {
     List<DateTime> months = [];
     DateTime current = DateTime(_startDate.year, _startDate.month, 1);
-    while (current.isBefore(_endDate)) {
+    // Use a safety break to avoid infinite loops if dates are invalid
+    int count = 0;
+    while (current.isBefore(_endDate) && count < 24) {
       months.add(current);
       current = DateTime(current.year, current.month + 1, 1);
+      count++;
     }
     return months;
   }
@@ -159,14 +181,12 @@ class _KassePageState extends State<KassePage> {
     Penalty? selectedPenalty;
     String? selectedTag;
 
-    // Get all unique tags from available penalties
     final allTags = _penalties.expand((p) => p.tags).toSet().toList()..sort();
 
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
-          // Filter penalties by selected tag
           final filteredPenalties = selectedTag == null 
               ? _penalties 
               : _penalties.where((p) => p.tags.contains(selectedTag)).toList();
@@ -185,37 +205,39 @@ class _KassePageState extends State<KassePage> {
                     items: _people.map((p) => DropdownMenuItem(value: p, child: Text(p.name))).toList(),
                   ),
                   const SizedBox(height: 16),
-                  const Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text('Filter nach Tag:', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                  ),
-                  const SizedBox(height: 4),
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        ChoiceChip(
-                          label: const Text('Alle', style: TextStyle(fontSize: 10)),
-                          selected: selectedTag == null,
-                          onSelected: (val) => setDialogState(() => selectedTag = null),
-                        ),
-                        ...allTags.map((tag) => Padding(
-                          padding: const EdgeInsets.only(left: 4.0),
-                          child: ChoiceChip(
-                            label: Text(tag, style: const TextStyle(fontSize: 10)),
-                            selected: selectedTag == tag,
-                            onSelected: (val) {
-                              setDialogState(() {
-                                selectedTag = val ? tag : null;
-                                selectedPenalty = null; // Reset selection if filtered out
-                              });
-                            },
-                          ),
-                        )),
-                      ],
+                  if (allTags.isNotEmpty) ...[
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Filter nach Tag:', style: TextStyle(fontSize: 12, color: Colors.grey)),
                     ),
-                  ),
-                  const SizedBox(height: 8),
+                    const SizedBox(height: 4),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          ChoiceChip(
+                            label: const Text('Alle', style: TextStyle(fontSize: 10)),
+                            selected: selectedTag == null,
+                            onSelected: (val) => setDialogState(() => selectedTag = null),
+                          ),
+                          ...allTags.map((tag) => Padding(
+                            padding: const EdgeInsets.only(left: 4.0),
+                            child: ChoiceChip(
+                              label: Text(tag, style: const TextStyle(fontSize: 10)),
+                              selected: selectedTag == tag,
+                              onSelected: (val) {
+                                setDialogState(() {
+                                  selectedTag = val ? tag : null;
+                                  selectedPenalty = null;
+                                });
+                              },
+                            ),
+                          )),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                   Row(
                     children: [
                       Expanded(
@@ -231,7 +253,12 @@ class _KassePageState extends State<KassePage> {
                         icon: const Icon(Icons.account_balance_wallet, color: Colors.green),
                         tooltip: 'Tilgung',
                         onPressed: () {
-                          if (selectedPerson == null) return;
+                          if (selectedPerson == null) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Bitte erst Person auswählen')),
+                            );
+                            return;
+                          }
                           _showTilgungDialog(selectedPerson!);
                         },
                       ),
@@ -317,7 +344,7 @@ class _KassePageState extends State<KassePage> {
         children: [
           Container(
             padding: const EdgeInsets.all(12),
-            color: Colors.blue[50],
+            color: const Color(0xFFF1F8E9), // Sehr sanftes Grün
             child: Column(
               children: [
                 Row(
@@ -328,8 +355,9 @@ class _KassePageState extends State<KassePage> {
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.settings),
+                      icon: const Icon(Icons.calendar_month),
                       onPressed: _showSeasonSettings,
+                      tooltip: 'Saisonzeitraum ändern',
                     ),
                   ],
                 ),
@@ -341,6 +369,7 @@ class _KassePageState extends State<KassePage> {
                         label: const Text('Gesamt', style: TextStyle(fontSize: 12)),
                         selected: _selectedMonthStart == null,
                         onSelected: (val) => setState(() => _selectedMonthStart = null),
+                        selectedColor: const Color(0xFFA5D6A7),
                       ),
                       const SizedBox(width: 8),
                       ...seasonMonths.map((monthStart) {
@@ -355,6 +384,7 @@ class _KassePageState extends State<KassePage> {
                                       _selectedMonthStart!.year == monthStart.year && 
                                       _selectedMonthStart!.month == monthStart.month,
                             onSelected: (val) => setState(() => _selectedMonthStart = val ? monthStart : null),
+                            selectedColor: const Color(0xFFA5D6A7),
                           ),
                         );
                       }),
@@ -365,37 +395,44 @@ class _KassePageState extends State<KassePage> {
             ),
           ),
           Expanded(
-            child: ListView.builder(
-              itemCount: _people.length,
-              itemBuilder: (context, index) {
-                final p = _people[index];
-                final balance = _calculateBalance(p.id);
-                return ListTile(
-                  leading: CircleAvatar(child: Text(p.name[0])),
-                  title: Text(p.name),
-                  subtitle: Text(p.group.displayName),
-                  trailing: Text(
-                    '${balance.toStringAsFixed(2).replaceAll('.', ',')} €',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: balance < 0 ? Colors.red : (balance > 0 ? Colors.green : Colors.black),
+            child: _people.isEmpty 
+              ? const Center(child: Text('Bitte erst Personen anlegen.'))
+              : ListView.builder(
+                itemCount: _people.length,
+                itemBuilder: (context, index) {
+                  final p = _people[index];
+                  final balance = _calculateBalance(p.id);
+                  return ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: const Color(0xFFA5D6A7),
+                      child: Text(p.name[0], style: const TextStyle(color: Colors.white)),
                     ),
-                  ),
-                );
-              },
-            ),
+                    title: Text(p.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: Text(p.group.displayName),
+                    trailing: Text(
+                      '${balance.toStringAsFixed(2).replaceAll('.', ',')} €',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        color: balance < 0 ? Colors.red : (balance > 0 ? Colors.green : Colors.black),
+                      ),
+                    ),
+                  );
+                },
+              ),
           ),
         ],
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: _addTransactionDialog,
-        child: const Icon(Icons.add),
+        backgroundColor: const Color(0xFF4CAF50),
+        child: const Icon(Icons.add, color: Colors.white),
       ),
     );
   }
 }
 
-// --- PERSONEN LIST PAGE (Drag & Drop) ---
+// --- PERSONEN LIST PAGE ---
 
 class PersonenListPage extends StatefulWidget {
   const PersonenListPage({super.key});
@@ -487,12 +524,12 @@ class _PersonenListPageState extends State<PersonenListPage> {
           Expanded(
             flex: 1,
             child: Container(
-              color: Colors.grey[100],
+              color: Colors.grey[50],
               child: Column(
                 children: [
                   const Padding(
-                    padding: EdgeInsets.all(8.0),
-                    child: Text('Personen', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                    padding: EdgeInsets.all(12.0),
+                    child: Text('Verfügbare Personen', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                   ),
                   Expanded(
                     child: ListView.builder(
@@ -503,15 +540,16 @@ class _PersonenListPageState extends State<PersonenListPage> {
                           data: p,
                           feedback: Material(
                             elevation: 4,
+                            borderRadius: BorderRadius.circular(8),
                             child: Container(
                               width: 200,
                               padding: const EdgeInsets.all(16),
-                              color: Colors.blue[100],
-                              child: Text(p.name),
+                              color: const Color(0xFFA5D6A7),
+                              child: Text(p.name, style: const TextStyle(color: Colors.white)),
                             ),
                           ),
                           childWhenDragging: Opacity(
-                            opacity: 0.5,
+                            opacity: 0.3,
                             child: ListTile(title: Text(p.name)),
                           ),
                           child: ListTile(
@@ -540,8 +578,8 @@ class _PersonenListPageState extends State<PersonenListPage> {
             child: Column(
               children: [
                 const Padding(
-                  padding: EdgeInsets.all(8.0),
-                  child: Text('Gruppen', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                  padding: EdgeInsets.all(12.0),
+                  child: Text('Gruppen-Zuweisung', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                 ),
                 Expanded(
                   child: ListView(
@@ -556,29 +594,35 @@ class _PersonenListPageState extends State<PersonenListPage> {
                         },
                         builder: (context, candidateData, rejectedData) {
                           return Container(
-                            margin: const EdgeInsets.all(8),
-                            padding: const EdgeInsets.all(8),
+                            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
-                              color: candidateData.isNotEmpty ? Colors.blue[50] : Colors.white,
-                              border: Border.all(color: candidateData.isNotEmpty ? Colors.blue : Colors.grey[300]!),
-                              borderRadius: BorderRadius.circular(8),
+                              color: candidateData.isNotEmpty ? const Color(0xFFE8F5E9) : Colors.white,
+                              border: Border.all(color: candidateData.isNotEmpty ? const Color(0xFF4CAF50) : Colors.grey[200]!),
+                              borderRadius: BorderRadius.circular(12),
+                              boxShadow: [
+                                if (candidateData.isEmpty)
+                                  BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 4, offset: const Offset(0, 2))
+                              ],
                             ),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(group.displayName, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                const SizedBox(height: 4),
+                                Text(group.displayName, style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF2E7D32))),
+                                const SizedBox(height: 8),
                                 Wrap(
-                                  spacing: 4,
-                                  runSpacing: 4,
+                                  spacing: 6,
+                                  runSpacing: 6,
                                   children: groupPeople.map((p) => Chip(
                                     label: Text(p.name, style: const TextStyle(fontSize: 12)),
+                                    backgroundColor: const Color(0xFFF1F8E9),
+                                    side: BorderSide.none,
                                     padding: EdgeInsets.zero,
                                     visualDensity: VisualDensity.compact,
                                   )).toList(),
                                 ),
                                 if (groupPeople.isEmpty)
-                                  const Text('Keine Personen', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                                  const Text('Keine Personen', style: TextStyle(color: Colors.grey, fontSize: 12, fontStyle: FontStyle.italic)),
                               ],
                             ),
                           );
@@ -594,7 +638,8 @@ class _PersonenListPageState extends State<PersonenListPage> {
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: _showAddPersonDialog,
-        child: const Icon(Icons.add),
+        backgroundColor: const Color(0xFF4CAF50),
+        child: const Icon(Icons.add, color: Colors.white),
       ),
     );
   }
@@ -699,18 +744,20 @@ class _StrafenListPageState extends State<StrafenListPage> {
               itemBuilder: (context, index) {
                 final p = _penalties[index];
                 return ListTile(
-                  title: Text(p.name),
+                  title: Text(p.name, style: const TextStyle(fontWeight: FontWeight.bold)),
                   subtitle: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('${p.amount.toStringAsFixed(2).replaceAll('.', ',')} €'),
+                      Text('${p.amount.toStringAsFixed(2).replaceAll('.', ',')} €', style: const TextStyle(color: Color(0xFF2E7D32))),
                       if (p.tags.isNotEmpty)
                         Padding(
-                          padding: const EdgeInsets.only(top: 4.0),
+                          padding: const EdgeInsets.only(top: 6.0),
                           child: Wrap(
-                            spacing: 4,
+                            spacing: 6,
                             children: p.tags.map((t) => Chip(
                               label: Text(t, style: const TextStyle(fontSize: 10)),
+                              backgroundColor: Colors.grey[200],
+                              side: BorderSide.none,
                               padding: EdgeInsets.zero,
                               materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                               visualDensity: VisualDensity.compact,
@@ -732,7 +779,8 @@ class _StrafenListPageState extends State<StrafenListPage> {
             ),
       floatingActionButton: FloatingActionButton(
         onPressed: _showAddPenaltyDialog,
-        child: const Icon(Icons.add),
+        backgroundColor: const Color(0xFF4CAF50),
+        child: const Icon(Icons.add, color: Colors.white),
       ),
     );
   }

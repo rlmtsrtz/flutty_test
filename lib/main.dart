@@ -440,9 +440,11 @@ class _KassePageState extends State<KassePage> {
 
   void _addTransaction(BuildContext context, List<Person> people, List<Penalty> penalties) {
     Person? selectedPerson;
+    PersonGroup? selectedGroup;
     Penalty? selectedPenalty;
     String? selectedTag;
     DateTime selectedDate = DateTime.now();
+    bool isGroupMode = false;
 
     final allTags = penalties.expand((p) => p.tags).toSet().toList()..sort();
 
@@ -451,6 +453,14 @@ class _KassePageState extends State<KassePage> {
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           final filtered = selectedTag == null ? penalties : penalties.where((p) => p.tags.contains(selectedTag)).toList();
+          
+          List<Person> targetPeople = [];
+          if (isGroupMode && selectedGroup != null) {
+            targetPeople = people.where((p) => p.group == selectedGroup).toList();
+          } else if (!isGroupMode && selectedPerson != null) {
+            targetPeople = [selectedPerson!];
+          }
+
           return AlertDialog(
             title: const Text('Strafe/Zahlung buchen'),
             content: SingleChildScrollView(
@@ -458,15 +468,40 @@ class _KassePageState extends State<KassePage> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      ChoiceChip(
+                        label: const Text('Einzeln'),
+                        selected: !isGroupMode,
+                        onSelected: (val) => setDialogState(() => isGroupMode = !val),
+                      ),
+                      const SizedBox(width: 8),
+                      ChoiceChip(
+                        label: const Text('Gruppe'),
+                        selected: isGroupMode,
+                        onSelected: (val) => setDialogState(() => isGroupMode = val),
+                      ),
+                    ],
+                  ),
+                  const Divider(),
+                  Row(
                     children: [
                       Expanded(
-                        child: DropdownButton<Person>(
-                          value: selectedPerson,
-                          hint: const Text('Person'),
-                          isExpanded: true,
-                          onChanged: (val) => setDialogState(() => selectedPerson = val),
-                          items: people.map((p) => DropdownMenuItem(value: p, child: Text(p.name))).toList(),
-                        ),
+                        child: isGroupMode
+                            ? DropdownButton<PersonGroup>(
+                                value: selectedGroup,
+                                hint: const Text('Gruppe'),
+                                isExpanded: true,
+                                onChanged: (val) => setDialogState(() => selectedGroup = val),
+                                items: PersonGroup.values.map((g) => DropdownMenuItem(value: g, child: Text(g.displayName))).toList(),
+                              )
+                            : DropdownButton<Person>(
+                                value: selectedPerson,
+                                hint: const Text('Person'),
+                                isExpanded: true,
+                                onChanged: (val) => setDialogState(() => selectedPerson = val),
+                                items: people.map((p) => DropdownMenuItem(value: p, child: Text(p.name))).toList(),
+                              ),
                       ),
                       IconButton(
                         icon: const Icon(Icons.calendar_today),
@@ -477,7 +512,15 @@ class _KassePageState extends State<KassePage> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  if (isGroupMode && selectedGroup != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8.0),
+                      child: Text(
+                        'Empfänger: ${targetPeople.length} Personen',
+                        style: const TextStyle(fontSize: 12, fontStyle: FontStyle.italic, color: Colors.grey),
+                      ),
+                    ),
+                  const SizedBox(height: 16),
                   Wrap(
                     spacing: 4,
                     children: [
@@ -497,13 +540,14 @@ class _KassePageState extends State<KassePage> {
                           items: filtered.map((p) => DropdownMenuItem(value: p, child: Text(p.name))).toList(),
                         ),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.account_balance_wallet, color: Colors.green),
-                        onPressed: () {
-                          if (selectedPerson == null) return;
-                          _showTilgung(context, selectedPerson!, selectedDate);
-                        },
-                      ),
+                      if (!isGroupMode)
+                        IconButton(
+                          icon: const Icon(Icons.account_balance_wallet, color: Colors.green),
+                          onPressed: () {
+                            if (selectedPerson == null) return;
+                            _showTilgung(context, selectedPerson!, selectedDate);
+                          },
+                        ),
                     ],
                   ),
                 ],
@@ -512,20 +556,22 @@ class _KassePageState extends State<KassePage> {
             actions: [
               TextButton(onPressed: () => Navigator.pop(context), child: const Text('Abbrechen')),
               ElevatedButton(
-                onPressed: (selectedPerson == null || selectedPenalty == null)
+                onPressed: (targetPeople.isEmpty || selectedPenalty == null)
                     ? null
                     : () async {
-                        final t = AppTransaction(
-                          id: DateTime.now().millisecondsSinceEpoch.toString(),
-                          personId: selectedPerson!.id,
-                          description: selectedPenalty!.name,
-                          amount: -selectedPenalty!.amount,
-                          date: selectedDate,
-                        );
                         Navigator.pop(context);
-                        await FirebaseService.addTransaction(t);
+                        for (var person in targetPeople) {
+                          final t = AppTransaction(
+                            id: '${DateTime.now().millisecondsSinceEpoch}_${person.id}',
+                            personId: person.id,
+                            description: selectedPenalty!.name,
+                            amount: -selectedPenalty!.amount,
+                            date: selectedDate,
+                          );
+                          await FirebaseService.addTransaction(t);
+                        }
                       },
-                child: const Text('Buchen'),
+                child: Text(isGroupMode ? 'Gruppe buchen' : 'Buchen'),
               ),
             ],
           );

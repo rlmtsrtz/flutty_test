@@ -2,10 +2,11 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/person.dart';
 import '../models/penalty.dart';
+import '../models/app_transaction.dart';
 
 class GoogleSheetsService {
   // Aktuelle URL aus der vorherigen Konfiguration
-  static const String _scriptUrl = 'https://script.google.com/macros/s/AKfycbxfdtclcKVF36olJtsr6SMrOw-EqTTmBxbaBHdn8djxZYtBhZ0uiz3anBP4DwEUHDUv/exec';
+  static const String _scriptUrl = 'https://script.google.com/macros/s/AKfycbw7Uivxn6-m82QQ05sQmwNLqTbQpEclzXDbam1ZpR3vwjDRosTDsEJ-La6Uc-ECpe6S/exec';
 
   static Future<Map<String, dynamic>> _post(Map<String, dynamic> data) async {
     try {
@@ -82,6 +83,40 @@ class GoogleSheetsService {
     final res = await _post({
       'action': 'deletePenalty',
       'id': id,
+    });
+    return res['result'] == 'success';
+  }
+
+  // NEW: Transactions
+  static Future<bool> addTransaction(AppTransaction transaction) async {
+    final res = await _post({
+      'action': 'addTransaction',
+      'data': transaction.toJson(),
+    });
+    return res['result'] == 'success';
+  }
+
+  static Future<List<AppTransaction>> getTransactions() async {
+    final res = await _post({'action': 'getTransactions'});
+    if (res['result'] == 'success') {
+      return (res['data'] as List).map((json) => AppTransaction.fromJson(json)).toList();
+    }
+    return [];
+  }
+
+  // NEW: Settings (Season)
+  static Future<Map<String, String>> getSettings() async {
+    final res = await _post({'action': 'getSettings'});
+    if (res['result'] == 'success') {
+      return Map<String, String>.from(res['data']);
+    }
+    return {};
+  }
+
+  static Future<bool> updateSettings(Map<String, String> settings) async {
+    final res = await _post({
+      'action': 'updateSettings',
+      'data': settings,
     });
     return res['result'] == 'success';
   }

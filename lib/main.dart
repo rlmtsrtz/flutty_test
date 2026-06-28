@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'models/person.dart';
 import 'models/penalty.dart';
+import 'models/app_transaction.dart';
 import 'services/google_sheets_service.dart';
 
 void main() {
@@ -31,10 +33,10 @@ class MainNavigationPage extends StatefulWidget {
 }
 
 class _MainNavigationPageState extends State<MainNavigationPage> {
-  int _selectedIndex = 1; // Start with People list
+  int _selectedIndex = 0;
 
   static const List<Widget> _pages = [
-    Center(child: Text('Kasse (Demnächst)')),
+    KassePage(),
     PersonenListPage(),
     StrafenListPage(),
   ];
@@ -59,6 +61,276 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
     );
   }
 }
+
+// --- KASSE PAGE ---
+
+class KassePage extends StatefulWidget {
+  const KassePage({super.key});
+
+  @override
+  State<KassePage> createState() => _KassePageState();
+}
+
+class _KassePageState extends State<KassePage> {
+  List<Person> _people = [];
+  List<AppTransaction> _transactions = [];
+  List<Penalty> _penalties = [];
+  bool _isLoading = true;
+
+  DateTime _startDate = DateTime(DateTime.now().year, 6, 1);
+  DateTime _endDate = DateTime(DateTime.now().year + 1, 5, 31);
+  int? _selectedMonth; // 1-12
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAllData();
+  }
+
+  Future<void> _loadAllData() async {
+    setState(() => _isLoading = true);
+    final people = await GoogleSheetsService.getPeople();
+    final transactions = await GoogleSheetsService.getTransactions();
+    final penalties = await GoogleSheetsService.getPenalties();
+    final settings = await GoogleSheetsService.getSettings();
+
+    if (settings.containsKey('seasonStart') && settings.containsKey('seasonEnd')) {
+      _startDate = DateTime.parse(settings['seasonStart']!);
+      _endDate = DateTime.parse(settings['seasonEnd']!);
+    }
+
+    setState(() {
+      _people = people;
+      _transactions = transactions;
+      _penalties = penalties;
+      _isLoading = false;
+    });
+  }
+
+  void _showSeasonSettings() async {
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2030),
+      initialDateRange: DateTimeRange(start: _startDate, end: _endDate),
+    );
+
+    if (picked != null) {
+      setState(() => _isLoading = true);
+      await GoogleSheetsService.updateSettings({
+        'seasonStart': picked.start.toIso8601String(),
+        'seasonEnd': picked.end.toIso8601String(),
+      });
+      _loadAllData();
+    }
+  }
+
+  double _calculateBalance(String personId) {
+    return _transactions
+        .where((t) => t.personId == personId)
+        .where((t) {
+          if (_selectedMonth != null) {
+            return t.date.month == _selectedMonth && 
+                   t.date.year == (_selectedMonth! < 6 ? _endDate.year : _startDate.year);
+          }
+          return t.date.isAfter(_startDate.subtract(const Duration(days: 1))) &&
+                 t.date.isBefore(_endDate.add(const Duration(days: 1)));
+        })
+        .fold(0.0, (sum, t) => sum + t.amount);
+  }
+
+  void _addTransactionDialog() {
+    Person? selectedPerson;
+    Penalty? selectedPenalty;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Strafe/Zahlung buchen'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButton<Person>(
+                value: selectedPerson,
+                hint: const Text('Person wählen'),
+                isExpanded: true,
+                onChanged: (val) => setDialogState(() => selectedPerson = val),
+                items: _people.map((p) => DropdownMenuItem(value: p, child: Text(p.name))).toList(),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButton<Penalty>(
+                      value: selectedPenalty,
+                      hint: const Text('Strafe wählen'),
+                      isExpanded: true,
+                      onChanged: (val) => setDialogState(() => selectedPenalty = val),
+                      items: _penalties.map((p) => DropdownMenuItem(value: p, child: Text(p.name))).toList(),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.account_balance_wallet, color: Colors.green),
+                    tooltip: 'Tilgung',
+                    onPressed: () {
+                      if (selectedPerson == null) return;
+                      _showTilgungDialog(selectedPerson!);
+                    },
+                  ),
+                ],
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Abbrechen')),
+            ElevatedButton(
+              onPressed: (selectedPerson == null || selectedPenalty == null) ? null : () async {
+                final trans = AppTransaction(
+                  id: DateTime.now().millisecondsSinceEpoch.toString(),
+                  personId: selectedPerson!.id,
+                  description: selectedPenalty!.name,
+                  amount: -selectedPenalty!.amount, // All penalties are negative
+                  date: DateTime.now(),
+                );
+                Navigator.pop(context);
+                setState(() => _isLoading = true);
+                await GoogleSheetsService.addTransaction(trans);
+                _loadAllData();
+              },
+              child: const Text('Buchen'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showTilgungDialog(Person person) {
+    final amountController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Tilgung für ${person.name}'),
+        content: TextField(
+          controller: amountController,
+          decoration: const InputDecoration(labelText: 'Betrag (€)', hintText: 'z.B. 10.00'),
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Abbrechen')),
+          ElevatedButton(
+            onPressed: () async {
+              final amountStr = amountController.text.replaceAll(',', '.');
+              final amount = double.tryParse(amountStr) ?? 0.0;
+              if (amount > 0) {
+                final trans = AppTransaction(
+                  id: DateTime.now().millisecondsSinceEpoch.toString(),
+                  personId: person.id,
+                  description: 'Tilgung',
+                  amount: amount, // Repayments are positive
+                  date: DateTime.now(),
+                  isTilgung: true,
+                );
+                Navigator.pop(context); // Close Tilgung dialog
+                Navigator.pop(context); // Close Add dialog
+                setState(() => _isLoading = true);
+                await GoogleSheetsService.addTransaction(trans);
+                _loadAllData();
+              }
+            },
+            child: const Text('Speichern'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) return const Center(child: CircularProgressIndicator());
+
+    return Scaffold(
+      body: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            color: Colors.blue[50],
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Saison: ${DateFormat('dd.MM.yy').format(_startDate)} - ${DateFormat('dd.MM.yy').format(_endDate)}',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.settings),
+                      onPressed: _showSeasonSettings,
+                    ),
+                  ],
+                ),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      FilterChip(
+                        label: const Text('Gesamt'),
+                        selected: _selectedMonth == null,
+                        onSelected: (val) => setState(() => _selectedMonth = null),
+                      ),
+                      const SizedBox(width: 8),
+                      ...List.generate(12, (index) {
+                        final month = ((index + 5) % 12) + 1; // Start with June
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 8.0),
+                          child: FilterChip(
+                            label: Text(DateFormat('MMM').format(DateTime(2022, month))),
+                            selected: _selectedMonth == month,
+                            onSelected: (val) => setState(() => _selectedMonth = val ? month : null),
+                          ),
+                        );
+                      }),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              itemCount: _people.length,
+              itemBuilder: (context, index) {
+                final p = _people[index];
+                final balance = _calculateBalance(p.id);
+                return ListTile(
+                  leading: CircleAvatar(child: Text(p.name[0])),
+                  title: Text(p.name),
+                  subtitle: Text(p.group.displayName),
+                  trailing: Text(
+                    '${balance.toStringAsFixed(2).replaceAll('.', ',')} €',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: balance < 0 ? Colors.red : (balance > 0 ? Colors.green : Colors.black),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _addTransactionDialog,
+        child: const Icon(Icons.add),
+      ),
+    );
+  }
+}
+
+// --- PERSONEN LIST PAGE (Drag & Drop) ---
 
 class PersonenListPage extends StatefulWidget {
   const PersonenListPage({super.key});
@@ -88,7 +360,7 @@ class _PersonenListPageState extends State<PersonenListPage> {
 
   void _showAddPersonDialog() {
     final nameController = TextEditingController();
-    PersonGroup selectedGroup = PersonGroup.ersatzbank; // Default to unassigned/bench
+    PersonGroup selectedGroup = PersonGroup.ersatzbank;
 
     showDialog(
       context: context,
@@ -147,7 +419,6 @@ class _PersonenListPageState extends State<PersonenListPage> {
     return Scaffold(
       body: Row(
         children: [
-          // Left Side: List of People
           Expanded(
             flex: 1,
             child: Container(
@@ -176,7 +447,7 @@ class _PersonenListPageState extends State<PersonenListPage> {
                           ),
                           childWhenDragging: Opacity(
                             opacity: 0.5,
-                            child: ListTile(title: Text(p.name), subtitle: Text(p.group.displayName)),
+                            child: ListTile(title: Text(p.name)),
                           ),
                           child: ListTile(
                             title: Text(p.name),
@@ -199,7 +470,6 @@ class _PersonenListPageState extends State<PersonenListPage> {
             ),
           ),
           const VerticalDivider(width: 1),
-          // Right Side: Group Buckets
           Expanded(
             flex: 1,
             child: Column(
@@ -264,6 +534,8 @@ class _PersonenListPageState extends State<PersonenListPage> {
     );
   }
 }
+
+// --- STRAFEN LIST PAGE ---
 
 class StrafenListPage extends StatefulWidget {
   const StrafenListPage({super.key});

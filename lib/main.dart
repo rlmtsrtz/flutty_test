@@ -907,7 +907,7 @@ class StrafenListPage extends StatelessWidget {
               TextField(controller: tagsC, decoration: const InputDecoration(labelText: 'Tags (komma-getrennt)')),
               TextField(
                 controller: descC, 
-                decoration: const InputDecoration(labelText: 'Erklärung (Box)', hintText: 'Kurze Beschreibung...'),
+                decoration: const InputDecoration(labelText: 'Erklärung', hintText: 'Kurze Beschreibung...'),
                 maxLines: 2,
               ),
             ],

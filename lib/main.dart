@@ -52,6 +52,7 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
   int _selectedIndex = 0;
   bool _isAdmin = false;
   User? _user;
+  bool _isTestDataMode = false;
 
   @override
   void initState() {
@@ -189,9 +190,9 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
   @override
   Widget build(BuildContext context) {
     final List<Widget> pages = [
-      KassePage(isAdmin: _isAdmin),
-      PersonenListPage(isAdmin: _isAdmin),
-      StrafenListPage(isAdmin: _isAdmin),
+      KassePage(isAdmin: _isAdmin || _isTestDataMode, isTestDataMode: _isTestDataMode),
+      PersonenListPage(isAdmin: _isAdmin || _isTestDataMode, isTestDataMode: _isTestDataMode),
+      StrafenListPage(isAdmin: _isAdmin || _isTestDataMode, isTestDataMode: _isTestDataMode),
     ];
 
     return Scaffold(
@@ -208,34 +209,55 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
               'TuS Dornberg Cash',
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
+            if (_isTestDataMode)
+              const Padding(
+                padding: EdgeInsets.only(left: 8.0),
+                child: Text('(TESTDATEN)', style: TextStyle(fontSize: 10, color: Colors.red)),
+              ),
           ],
         ),
         backgroundColor: const Color(0xFFA5D6A7),
         actions: [
-          if (_user == null)
+          if (_user == null && !_isTestDataMode)
             IconButton(
               icon: const Icon(Icons.login),
               onPressed: _showLoginDialog,
               tooltip: 'Admin Login',
             )
           else ...[
-            if (_user?.email == 'felske.mirco@gmail.com')
+            if (_user?.email == 'felske.mirco@gmail.com' && !_isTestDataMode)
               IconButton(
                 icon: const Icon(Icons.settings),
                 onPressed: _showAdminManagement,
                 tooltip: 'Admin-Verwaltung',
               ),
             PopupMenuButton(
-              icon: CircleAvatar(
-                backgroundImage: _user!.photoURL != null ? NetworkImage(_user!.photoURL!) : null,
-                child: _user!.photoURL == null ? const Icon(Icons.person) : null,
-              ),
+              icon: _isTestDataMode 
+                  ? const CircleAvatar(child: Icon(Icons.science))
+                  : CircleAvatar(
+                      backgroundImage: _user?.photoURL != null ? NetworkImage(_user!.photoURL!) : null,
+                      child: _user?.photoURL == null ? const Icon(Icons.person) : null,
+                    ),
               itemBuilder: (context) => [
-                PopupMenuItem(child: Text(_user!.email ?? '')),
+                if (_user != null) PopupMenuItem(child: Text(_user!.email ?? '')),
                 PopupMenuItem(
-                  onTap: () => FirebaseService.signOut(),
-                  child: const Text('Abmelden'),
+                  onTap: () {
+                    setState(() {
+                      if (_isTestDataMode) {
+                        _isTestDataMode = false;
+                      } else {
+                        TestData.generate();
+                        _isTestDataMode = true;
+                      }
+                    });
+                  },
+                  child: Text(_isTestDataMode ? 'Lade Realdaten' : 'Lade Testdaten'),
                 ),
+                if (_user != null)
+                  PopupMenuItem(
+                    onTap: () => FirebaseService.signOut(),
+                    child: const Text('Abmelden'),
+                  ),
               ],
             ),
           ],
@@ -255,11 +277,85 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
   }
 }
 
+// --- TEST DATA GENERATOR ---
+
+class TestData {
+  static List<Person> people = [];
+  static List<Penalty> penalties = [];
+  static List<AppTransaction> transactions = [];
+  static List<String> groups = ['MG 1', 'MG 2', 'MG 3', 'MG 4', 'Trainer', 'Ersatzbank'];
+
+  static void generate() {
+    final names = [
+      'Lukas Müller', 'Leon Schmidt', 'Finn Fischer', 'Elias Weber', 'Jonas Meyer',
+      'Ben Wagner', 'Noah Becker', 'Paul Schulz', 'Luis Hoffmann', 'Lars Koch',
+      'Julian Bauer', 'Matthias Richter', 'Simon Klein', 'Tim Wolf', 'Felix Schröder',
+      'Moritz Neumann', 'Jakob Schwarz', 'David Zimmermann', 'Jan Braun', 'Hannes Krüger',
+      'Philipp Hofmann', 'Bastian Hartmann', 'Kevin Lange', 'Marcel Schmitt', 'Sven Werner'
+    ];
+
+    people = List.generate(names.length, (i) => Person(
+      id: 'test_p_$i',
+      name: names[i],
+      groups: [groups[i % groups.length]]
+    ));
+
+    penalties = [
+      Penalty(id: 't1', name: 'Zuspätkommen Training', amount: 5.0, tags: ['Einzeln', 'Training'], description: 'Innerhalb der ersten 15 Min'),
+      Penalty(id: 't2', name: 'Handy in der Kabine', amount: 10.0, tags: ['Einzeln', 'Disziplin'], description: 'Während der Ansprache'),
+      Penalty(id: 't3', name: 'Materialdienst vergessen', amount: 15.0, tags: ['Gruppe', 'Material'], description: 'Bälle oder Hütchen'),
+      Penalty(id: 't4', name: 'Trikotwäsche vergessen', amount: 20.0, tags: ['Einzeln', 'Material'], description: 'Kompletter Satz'),
+      Penalty(id: 't5', name: 'Gelbe Karte (Meckern)', amount: 10.0, tags: ['Einzeln', 'Spiel'], description: 'Unsportlichkeit'),
+    ];
+
+    transactions = [];
+    final seasonStart = DateTime(2025, 7, 1);
+    for (var i = 0; i < 150; i++) {
+      final p = people[i % people.length];
+      final pen = penalties[i % penalties.length];
+      // Random date within 25/26 season
+      final date = seasonStart.add(Duration(days: i * 2));
+      if (date.isAfter(DateTime(2026, 6, 30))) break;
+
+      transactions.add(AppTransaction(
+        id: 'test_t_$i',
+        personId: p.id,
+        description: pen.name,
+        amount: -pen.amount,
+        date: date,
+      ));
+
+      // Occasional Tilgung
+      if (i % 4 == 0) {
+        transactions.add(AppTransaction(
+          id: 'test_til_$i',
+          personId: p.id,
+          description: 'Tilgung',
+          amount: pen.amount * 2,
+          date: date.add(const Duration(days: 1)),
+          isTilgung: true,
+        ));
+      }
+    }
+  }
+
+  static Stream<List<Person>> getPeopleStream() => Stream.value(people);
+  static Stream<List<Penalty>> getPenaltiesStream() => Stream.value(penalties);
+  static Stream<List<AppTransaction>> getTransactionsStream() => Stream.value(transactions);
+  static Stream<List<String>> getGroupsStream() => Stream.value(groups);
+  static Stream<Map<String, String>> getPaymentStream() => Stream.value({
+    'iban': 'DE12 3456 7890 1234 5678 90',
+    'name': 'Max Mustermann (Test)',
+    'email': 'test@dornberg.de'
+  });
+}
+
 // --- KASSE PAGE ---
 
 class KassePage extends StatefulWidget {
   final bool isAdmin;
-  const KassePage({super.key, required this.isAdmin});
+  final bool isTestDataMode;
+  const KassePage({super.key, required this.isAdmin, required this.isTestDataMode});
 
   @override
   State<KassePage> createState() => _KassePageState();
@@ -275,7 +371,12 @@ class _KassePageState extends State<KassePage> {
   @override
   void initState() {
     super.initState();
-    _loadSettings();
+    if (widget.isTestDataMode) {
+      _startDate = DateTime(2025, 7, 1);
+      _endDate = DateTime(2026, 6, 30);
+    } else {
+      _loadSettings();
+    }
   }
 
   void _loadSettings() async {
@@ -297,11 +398,18 @@ class _KassePageState extends State<KassePage> {
     );
 
     if (picked != null) {
-      await FirebaseService.updateSettings({
-        'seasonStart': picked.start.toIso8601String(),
-        'seasonEnd': picked.end.toIso8601String(),
-      });
-      _loadSettings();
+      if (!widget.isTestDataMode) {
+        await FirebaseService.updateSettings({
+          'seasonStart': picked.start.toIso8601String(),
+          'seasonEnd': picked.end.toIso8601String(),
+        });
+        _loadSettings();
+      } else {
+        setState(() {
+          _startDate = picked.start;
+          _endDate = picked.end;
+        });
+      }
     }
   }
 
@@ -326,11 +434,13 @@ class _KassePageState extends State<KassePage> {
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Abbrechen')),
           ElevatedButton(
             onPressed: () async {
-              await FirebaseService.updatePaymentInfo({
-                'iban': ibanC.text.trim(),
-                'name': nameC.text.trim(),
-                'email': emailC.text.trim(),
-              });
+              if (!widget.isTestDataMode) {
+                await FirebaseService.updatePaymentInfo({
+                  'iban': ibanC.text.trim(),
+                  'name': nameC.text.trim(),
+                  'email': emailC.text.trim(),
+                });
+              }
               Navigator.pop(context);
             },
             child: const Text('Speichern'),
@@ -466,22 +576,84 @@ class _KassePageState extends State<KassePage> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Spieler-Historie kopiert!')));
   }
 
+  void _showSearchDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Spieler suchen'),
+        content: TextField(
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'Name eingeben...'),
+          onChanged: (val) => setState(() => _searchQuery = val),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Fertig')),
+        ],
+      ),
+    );
+  }
+
+  void _showFilterDialog(List<Penalty> penalties) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Nach Strafe filtern'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              ListTile(
+                title: const Text('Alle anzeigen'),
+                leading: Radio<String?>(value: null, groupValue: _selectedPenaltyFilter, onChanged: (v) {
+                  setState(() => _selectedPenaltyFilter = v);
+                  Navigator.pop(context);
+                }),
+                onTap: () {
+                  setState(() => _selectedPenaltyFilter = null);
+                  Navigator.pop(context);
+                },
+              ),
+              ...penalties.map((p) => ListTile(
+                title: Text(p.name),
+                leading: Radio<String?>(value: p.name, groupValue: _selectedPenaltyFilter, onChanged: (v) {
+                  setState(() => _selectedPenaltyFilter = v);
+                  Navigator.pop(context);
+                }),
+                onTap: () {
+                  setState(() => _selectedPenaltyFilter = p.name);
+                  Navigator.pop(context);
+                },
+              )),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final peopleStream = widget.isTestDataMode ? TestData.getPeopleStream() : FirebaseService.getPeople();
+    final transStream = widget.isTestDataMode ? TestData.getTransactionsStream() : FirebaseService.getTransactions();
+    final penaltyStream = widget.isTestDataMode ? TestData.getPenaltiesStream() : FirebaseService.getPenalties();
+    final groupsStream = widget.isTestDataMode ? TestData.getGroupsStream() : FirebaseService.getGroups();
+    final paymentStream = widget.isTestDataMode ? TestData.getPaymentStream() : FirebaseService.getPaymentInfo();
+
     return StreamBuilder<List<Person>>(
-      stream: FirebaseService.getPeople(),
+      stream: peopleStream,
       builder: (context, peopleSnap) {
         return StreamBuilder<List<AppTransaction>>(
-          stream: FirebaseService.getTransactions(),
+          stream: transStream,
           builder: (context, transSnap) {
             return StreamBuilder<List<Penalty>>(
-              stream: FirebaseService.getPenalties(),
+              stream: penaltyStream,
               builder: (context, penaltySnap) {
                 return StreamBuilder<List<String>>(
-                  stream: FirebaseService.getGroups(),
+                  stream: groupsStream,
                   builder: (context, groupsSnap) {
                     return StreamBuilder<Map<String, String>>(
-                      stream: FirebaseService.getPaymentInfo(),
+                      stream: paymentStream,
                       builder: (context, paymentSnap) {
                         if (!peopleSnap.hasData || !transSnap.hasData || !penaltySnap.hasData || !groupsSnap.hasData || !paymentSnap.hasData) {
                           return const Center(child: CircularProgressIndicator());
@@ -556,26 +728,17 @@ class _KassePageState extends State<KassePage> {
                                   children: [
                                     Row(
                                       children: [
-                                        Expanded(
-                                          child: TextField(
-                                            decoration: const InputDecoration(
-                                              hintText: 'Suche...',
-                                              prefixIcon: Icon(Icons.search),
-                                              isDense: true,
-                                              border: OutlineInputBorder(),
-                                            ),
-                                            onChanged: (val) => setState(() => _searchQuery = val),
-                                          ),
+                                        const Text('Spieler & Strafen', style: TextStyle(fontWeight: FontWeight.bold)),
+                                        const Spacer(),
+                                        IconButton(
+                                          icon: Icon(Icons.search, color: _searchQuery.isNotEmpty ? Colors.green : null),
+                                          onPressed: _showSearchDialog,
+                                          tooltip: 'Name suchen',
                                         ),
-                                        const SizedBox(width: 8),
-                                        DropdownButton<String?>(
-                                          value: _selectedPenaltyFilter,
-                                          hint: const Icon(Icons.filter_list),
-                                          items: [
-                                            const DropdownMenuItem(value: null, child: Text('Alle')),
-                                            ...penaltySnap.data!.map((p) => DropdownMenuItem(value: p.name, child: Text(p.name))),
-                                          ],
-                                          onChanged: (val) => setState(() => _selectedPenaltyFilter = val),
+                                        IconButton(
+                                          icon: Icon(Icons.filter_list, color: _selectedPenaltyFilter != null ? Colors.green : null),
+                                          onPressed: () => _showFilterDialog(penaltySnap.data!),
+                                          tooltip: 'Nach Strafe filtern',
                                         ),
                                       ],
                                     ),
@@ -885,7 +1048,12 @@ class _KassePageState extends State<KassePage> {
                               amount: -selectedPenalty!.amount,
                               date: selectedDate,
                             );
-                            await FirebaseService.addTransaction(t);
+                            if (!widget.isTestDataMode) {
+                              await FirebaseService.addTransaction(t);
+                            } else {
+                              TestData.transactions.add(t);
+                              setState(() {}); // Trigger refresh in test mode
+                            }
                           }
                         }
                       },
@@ -921,7 +1089,12 @@ class _KassePageState extends State<KassePage> {
                 );
                 Navigator.pop(context);
                 Navigator.pop(context);
-                await FirebaseService.addTransaction(t);
+                if (!widget.isTestDataMode) {
+                  await FirebaseService.addTransaction(t);
+                } else {
+                  TestData.transactions.add(t);
+                  setState(() {});
+                }
               }
             },
             child: const Text('Speichern'),
@@ -957,19 +1130,14 @@ class _KassePageState extends State<KassePage> {
                             IconButton(
                               icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
                               onPressed: () async {
-                                final confirm = await showDialog<bool>(
-                                  context: context,
-                                  builder: (context) => AlertDialog(
-                                    title: const Text('Eintrag löschen?'),
-                                    content: const Text('Soll dieser Eintrag wirklich dauerhaft entfernt werden?'),
-                                    actions: [
-                                      TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Nein')),
-                                      TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Löschen')),
-                                    ],
-                                  ),
-                                );
+                                final confirm = await _showDeleteConfirm(context);
                                 if (confirm == true) {
-                                  await FirebaseService.deleteTransaction(t.id);
+                                  if (!widget.isTestDataMode) {
+                                    await FirebaseService.deleteTransaction(t.id);
+                                  } else {
+                                    TestData.transactions.removeWhere((item) => item.id == t.id);
+                                    setState(() {});
+                                  }
                                   Navigator.pop(context);
                                 }
                               },
@@ -984,28 +1152,51 @@ class _KassePageState extends State<KassePage> {
       ),
     );
   }
+
+  Future<bool?> _showDeleteConfirm(BuildContext context) {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Wirklich löschen?'),
+        content: const Text('Soll dieser Eintrag dauerhaft entfernt werden?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Abbrechen')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Löschen', style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+  }
 }
 
 // --- PERSONEN LIST PAGE ---
 
-class PersonenListPage extends StatelessWidget {
+class PersonenListPage extends StatefulWidget {
   final bool isAdmin;
-  const PersonenListPage({super.key, required this.isAdmin});
+  final bool isTestDataMode;
+  const PersonenListPage({super.key, required this.isAdmin, required this.isTestDataMode});
 
   @override
+  State<PersonenListPage> createState() => _PersonenListPageState();
+}
+
+class _PersonenListPageState extends State<PersonenListPage> {
+  @override
   Widget build(BuildContext context) {
+    final peopleStream = widget.isTestDataMode ? TestData.getPeopleStream() : FirebaseService.getPeople();
+    final groupsStream = widget.isTestDataMode ? TestData.getGroupsStream() : FirebaseService.getGroups();
+
     return StreamBuilder<List<Person>>(
-      stream: FirebaseService.getPeople(),
+      stream: peopleStream,
       builder: (context, peopleSnap) {
         return StreamBuilder<List<String>>(
-          stream: FirebaseService.getGroups(),
+          stream: groupsStream,
           builder: (context, groupsSnap) {
             if (!peopleSnap.hasData || !groupsSnap.hasData) return const Center(child: CircularProgressIndicator());
             final people = peopleSnap.data!..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
             final groups = groupsSnap.data!;
 
             return Scaffold(
-              appBar: isAdmin ? AppBar(
+              appBar: widget.isAdmin ? AppBar(
                 toolbarHeight: 40,
                 backgroundColor: Colors.white,
                 title: TextButton.icon(
@@ -1034,11 +1225,18 @@ class PersonenListPage extends StatelessWidget {
                                 return ListTile(
                                   title: Text(p.name),
                                   subtitle: Text(p.groups.isEmpty ? 'Keine Gruppe' : p.groups.join(', ')),
-                                  onTap: isAdmin ? () => _showPersonDialog(context, groups, person: p) : null,
-                                  trailing: isAdmin 
+                                  onTap: widget.isAdmin ? () => _showPersonDialog(context, groups, person: p) : null,
+                                  trailing: widget.isAdmin 
                                       ? IconButton(
                                           icon: const Icon(Icons.delete, color: Colors.red), 
-                                          onPressed: () => _confirmDelete(context, () => FirebaseService.deletePerson(p.id))
+                                          onPressed: () => _confirmDelete(context, () {
+                                            if (!widget.isTestDataMode) {
+                                              FirebaseService.deletePerson(p.id);
+                                            } else {
+                                              TestData.people.removeWhere((item) => item.id == p.id);
+                                              setState(() {});
+                                            }
+                                          })
                                         ) 
                                       : null,
                                 );
@@ -1099,7 +1297,7 @@ class PersonenListPage extends StatelessWidget {
                   ),
                 ],
               ),
-              floatingActionButton: isAdmin
+              floatingActionButton: widget.isAdmin
                   ? FloatingActionButton(
                       onPressed: () => _showPersonDialog(context, groups),
                       backgroundColor: const Color(0xFF4CAF50),
@@ -1130,7 +1328,12 @@ class PersonenListPage extends StatelessWidget {
                   decoration: const InputDecoration(labelText: 'Neue Gruppe hinzufügen'),
                   onSubmitted: (val) async {
                     if (val.isNotEmpty) {
-                      await FirebaseService.addGroup(val.trim());
+                      if (!widget.isTestDataMode) {
+                        await FirebaseService.addGroup(val.trim());
+                      } else {
+                        TestData.groups.add(val.trim());
+                        setState(() {});
+                      }
                       controller.clear();
                     }
                   },
@@ -1155,7 +1358,14 @@ class PersonenListPage extends StatelessWidget {
                             ),
                             IconButton(
                               icon: const Icon(Icons.delete, color: Colors.red, size: 20),
-                              onPressed: () => _confirmDelete(context, () => FirebaseService.deleteGroup(group)),
+                              onPressed: () => _confirmDelete(context, () {
+                                if (!widget.isTestDataMode) {
+                                  FirebaseService.deleteGroup(group);
+                                } else {
+                                  TestData.groups.remove(group);
+                                  setState(() {});
+                                }
+                              }),
                             ),
                           ],
                         ),
@@ -1184,7 +1394,13 @@ class PersonenListPage extends StatelessWidget {
           ElevatedButton(
             onPressed: () async {
               if (controller.text.isNotEmpty && controller.text != oldName) {
-                await FirebaseService.renameGroup(oldName, controller.text.trim());
+                if (!widget.isTestDataMode) {
+                  await FirebaseService.renameGroup(oldName, controller.text.trim());
+                } else {
+                  final idx = TestData.groups.indexOf(oldName);
+                  if (idx != -1) TestData.groups[idx] = controller.text.trim();
+                  setState(() {});
+                }
                 Navigator.pop(context);
               }
             },
@@ -1238,8 +1454,18 @@ class PersonenListPage extends StatelessWidget {
                     name: nameController.text.trim(), 
                     groups: selectedGroups
                   );
+                  if (!widget.isTestDataMode) {
+                    await FirebaseService.addPerson(p);
+                  } else {
+                    if (person == null) {
+                      TestData.people.add(p);
+                    } else {
+                      final idx = TestData.people.indexWhere((item) => item.id == p.id);
+                      if (idx != -1) TestData.people[idx] = p;
+                    }
+                    setState(() {});
+                  }
                   Navigator.pop(context);
-                  await FirebaseService.addPerson(p);
                 }
               },
               child: Text(person == null ? 'Hinzufügen' : 'Speichern'),
@@ -1273,14 +1499,22 @@ class PersonenListPage extends StatelessWidget {
 
 // --- STRAFEN LIST PAGE ---
 
-class StrafenListPage extends StatelessWidget {
+class StrafenListPage extends StatefulWidget {
   final bool isAdmin;
-  const StrafenListPage({super.key, required this.isAdmin});
+  final bool isTestDataMode;
+  const StrafenListPage({super.key, required this.isAdmin, required this.isTestDataMode});
 
   @override
+  State<StrafenListPage> createState() => _StrafenListPageState();
+}
+
+class _StrafenListPageState extends State<StrafenListPage> {
+  @override
   Widget build(BuildContext context) {
+    final penaltyStream = widget.isTestDataMode ? TestData.getPenaltiesStream() : FirebaseService.getPenalties();
+
     return StreamBuilder<List<Penalty>>(
-      stream: FirebaseService.getPenalties(),
+      stream: penaltyStream,
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
         final penalties = snapshot.data!;
@@ -1291,7 +1525,7 @@ class StrafenListPage extends StatelessWidget {
             itemBuilder: (context, index) {
               final p = penalties[index];
               return InkWell(
-                onTap: isAdmin ? () => _showPenaltyDialog(context, penalty: p) : null,
+                onTap: widget.isAdmin ? () => _showPenaltyDialog(context, penalty: p) : null,
                 child: ListTile(
                   title: Text(p.name, style: const TextStyle(fontWeight: FontWeight.bold)),
                   subtitle: Column(
@@ -1321,15 +1555,22 @@ class StrafenListPage extends StatelessWidget {
                         ),
                     ],
                   ),
-                  trailing: isAdmin ? IconButton(
+                  trailing: widget.isAdmin ? IconButton(
                     icon: const Icon(Icons.delete, color: Colors.red), 
-                    onPressed: () => _confirmDelete(context, () => FirebaseService.deletePenalty(p.id))
+                    onPressed: () => _confirmDelete(context, () {
+                      if (!widget.isTestDataMode) {
+                        FirebaseService.deletePenalty(p.id);
+                      } else {
+                        TestData.penalties.removeWhere((item) => item.id == p.id);
+                        setState(() {});
+                      }
+                    })
                   ) : null,
                 ),
               );
             },
           ),
-          floatingActionButton: isAdmin
+          floatingActionButton: widget.isAdmin
               ? FloatingActionButton(
                   onPressed: () => _showPenaltyDialog(context),
                   backgroundColor: const Color(0xFF4CAF50),
@@ -1378,8 +1619,18 @@ class StrafenListPage extends StatelessWidget {
                   tags: tagsC.text.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList(),
                   description: descC.text,
                 );
+                if (!widget.isTestDataMode) {
+                  await FirebaseService.addPenalty(p);
+                } else {
+                  if (penalty == null) {
+                    TestData.penalties.add(p);
+                  } else {
+                    final idx = TestData.penalties.indexWhere((item) => item.id == p.id);
+                    if (idx != -1) TestData.penalties[idx] = p;
+                  }
+                  setState(() {});
+                }
                 Navigator.pop(context);
-                await FirebaseService.addPenalty(p);
               }
             },
             child: Text(penalty == null ? 'Hinzufügen' : 'Speichern'),

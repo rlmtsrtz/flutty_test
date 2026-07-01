@@ -479,17 +479,17 @@ class _KassePageState extends State<KassePage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(controller: ibanC, decoration: const InputDecoration(labelText: 'IBAN')),
+                TextField(controller: nameC, decoration: const InputDecoration(labelText: 'Kontoinhaber')),
                 RadioListTile<String>(
-                  title: const Text('IBAN als präferiert setzen'),
+                  title: const Text('Konto als präferiert setzen'),
                   value: 'iban',
                   groupValue: preferred,
                   onChanged: (val) => setDialogState(() => preferred = val!),
                 ),
                 const Divider(),
-                TextField(controller: nameC, decoration: const InputDecoration(labelText: 'Kontoinhaber')),
                 TextField(controller: emailC, decoration: const InputDecoration(labelText: 'E-Mail (PayPal/Kontakt)')),
                 RadioListTile<String>(
-                  title: const Text('E-Mail als präferiert setzen'),
+                  title: const Text('PayPal als präferiert setzen'),
                   value: 'email',
                   groupValue: preferred,
                   onChanged: (val) => setDialogState(() => preferred = val!),
@@ -636,6 +636,7 @@ class _KassePageState extends State<KassePage> {
                 const Text("Sekundäre Zahlungsmethode:", style: TextStyle(fontSize: 9, color: Colors.grey)),
                 if (!ibanPref) ...[
                   Text("IBAN: ${_formatIBAN(paymentInfo['iban'] ?? '')}", style: const TextStyle(fontSize: 8)),
+                  Text("Inhaber: ${paymentInfo['name'] ?? ''}", style: const TextStyle(fontSize: 7)),
                 ] else ...[
                   Text("E-Mail: ${paymentInfo['email'] ?? ''}", style: const TextStyle(fontSize: 8)),
                 ],
@@ -930,20 +931,27 @@ class _KassePageState extends State<KassePage> {
                                       ),
                                       const Divider(),
                                       const Text('Präferierte Zahlungsmethode:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                                      if (ibanPref) 
-                                        _buildInfoRow('IBAN', _formatIBAN(paymentInfo['iban'] ?? ''), isIban: true, isBold: true)
-                                      else
+                                      if (ibanPref) ...[
+                                        _buildInfoRow('IBAN', _formatIBAN(paymentInfo['iban'] ?? ''), isIban: true, isBold: true),
+                                        if (paymentInfo['name'] != null)
+                                          Padding(
+                                            padding: const EdgeInsets.only(left: 4.0),
+                                            child: Text('Inhaber: ${paymentInfo['name']}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                          ),
+                                      ] else
                                         _buildInfoRow('E-Mail', paymentInfo['email'] ?? '', isBold: true),
                                       
                                       const SizedBox(height: 8),
                                       const Text('Sekundäre Zahlungsmethode:', style: TextStyle(fontSize: 11, color: Colors.grey)),
-                                      if (!ibanPref)
-                                        _buildInfoRow('IBAN', _formatIBAN(paymentInfo['iban'] ?? ''), isIban: true)
-                                      else
+                                      if (!ibanPref) ...[
+                                        _buildInfoRow('IBAN', _formatIBAN(paymentInfo['iban'] ?? ''), isIban: true),
+                                        if (paymentInfo['name'] != null)
+                                          Padding(
+                                            padding: const EdgeInsets.only(left: 4.0),
+                                            child: Text('Inhaber: ${paymentInfo['name']}', style: const TextStyle(fontSize: 11)),
+                                          ),
+                                      ] else
                                         _buildInfoRow('E-Mail', paymentInfo['email'] ?? ''),
-                                      
-                                      if (ibanPref && paymentInfo['name'] != null)
-                                        Text('Inhaber: ${paymentInfo['name']}', style: const TextStyle(fontSize: 12)),
                                     ],
                                   ),
                                 ),

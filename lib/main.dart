@@ -250,7 +250,7 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
                     ),
               itemBuilder: (context) => [
                 if (_user != null) PopupMenuItem(child: Text(_user!.email ?? '')),
-                if (_isAdmin) // Test data toggle only for admins
+                if (_isAdmin) 
                 PopupMenuItem(
                   onTap: () {
                     setState(() {
@@ -361,7 +361,8 @@ class TestData {
   static Stream<Map<String, String>> getPaymentStream() => Stream.value({
     'iban': 'DE12 3456 7890 1234 5678 90',
     'name': 'Max Mustermann (Test)',
-    'email': 'test@dornberg.de'
+    'email': 'test@dornberg.de',
+    'preferred': 'iban', // Default for test
   });
 }
 
@@ -466,35 +467,54 @@ class _KassePageState extends State<KassePage> {
     final ibanC = TextEditingController(text: current['iban']);
     final nameC = TextEditingController(text: current['name']);
     final emailC = TextEditingController(text: current['email']);
+    String preferred = current['preferred'] ?? 'iban';
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Zahlungsinformationen bearbeiten'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(controller: ibanC, decoration: const InputDecoration(labelText: 'IBAN')),
-            TextField(controller: nameC, decoration: const InputDecoration(labelText: 'Name des Kontoinhabers')),
-            TextField(controller: emailC, decoration: const InputDecoration(labelText: 'E-Mail für PayPal/Kontakt')),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Zahlungsinformationen'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(controller: ibanC, decoration: const InputDecoration(labelText: 'IBAN')),
+                RadioListTile<String>(
+                  title: const Text('IBAN als präferiert setzen'),
+                  value: 'iban',
+                  groupValue: preferred,
+                  onChanged: (val) => setDialogState(() => preferred = val!),
+                ),
+                const Divider(),
+                TextField(controller: nameC, decoration: const InputDecoration(labelText: 'Kontoinhaber')),
+                TextField(controller: emailC, decoration: const InputDecoration(labelText: 'E-Mail (PayPal/Kontakt)')),
+                RadioListTile<String>(
+                  title: const Text('E-Mail als präferiert setzen'),
+                  value: 'email',
+                  groupValue: preferred,
+                  onChanged: (val) => setDialogState(() => preferred = val!),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Abbrechen')),
+            ElevatedButton(
+              onPressed: () async {
+                if (!widget.isTestDataMode) {
+                  await FirebaseService.updatePaymentInfo({
+                    'iban': ibanC.text.trim(),
+                    'name': nameC.text.trim(),
+                    'email': emailC.text.trim(),
+                    'preferred': preferred,
+                  });
+                }
+                Navigator.pop(context);
+              },
+              child: const Text('Speichern'),
+            ),
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Abbrechen')),
-          ElevatedButton(
-            onPressed: () async {
-              if (!widget.isTestDataMode) {
-                await FirebaseService.updatePaymentInfo({
-                  'iban': ibanC.text.trim(),
-                  'name': nameC.text.trim(),
-                  'email': emailC.text.trim(),
-                });
-              }
-              Navigator.pop(context);
-            },
-            child: const Text('Speichern'),
-          ),
-        ],
       ),
     );
   }
@@ -580,57 +600,70 @@ class _KassePageState extends State<KassePage> {
   }
 
   void _shareVisualTable(List<Person> people, List<AppTransaction> transactions, Map<String, String> paymentInfo) async {
-    // Compact high-res table
     var sorted = List<Person>.from(people)..sort((a,b) => a.name.compareTo(b.name));
+    bool ibanPref = paymentInfo['preferred'] == 'iban';
     
     Widget tableWidget = Container(
-      width: 400, // Narrower for better mobile browser handling
-      padding: const EdgeInsets.all(20),
+      width: 350, // Ultra-compact for layout safety
+      padding: const EdgeInsets.all(15),
       color: Colors.white,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text("TuS Dornberg Cash - Salden", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.green[800])),
-          Text("Stand: ${DateFormat('dd.MM.yyyy').format(DateTime.now())}", style: const TextStyle(fontSize: 10, color: Colors.grey)),
+          Text("Stand: ${DateFormat('dd.MM.yyyy').format(DateTime.now())}", style: const TextStyle(fontSize: 9, color: Colors.grey)),
           if (_selectedPenaltyFilter != null)
-            Text("Filter: $_selectedPenaltyFilter", style: const TextStyle(fontSize: 12, color: Colors.green, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 12),
+            Text("Filter: $_selectedPenaltyFilter", style: const TextStyle(fontSize: 11, color: Colors.green, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 10),
+          
+          // Payment Info grouped
           Container(
-            padding: const EdgeInsets.all(10),
+            width: double.infinity,
+            padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(color: Colors.green[50], borderRadius: BorderRadius.circular(4), border: Border.all(color: Colors.green[100]!)),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text("Zahlungsinformationen:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 10)),
-                Text("IBAN: ${_formatIBAN(paymentInfo['iban'] ?? '')}", style: const TextStyle(fontSize: 9)),
-                Text("Name: ${paymentInfo['name'] ?? ''}", style: const TextStyle(fontSize: 9)),
-                Text("E-Mail: ${paymentInfo['email'] ?? ''}", style: const TextStyle(fontSize: 9)),
+                const Text("Präferierte Zahlungsmethode:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 10)),
+                if (ibanPref) ...[
+                  Text("IBAN: ${_formatIBAN(paymentInfo['iban'] ?? '')}", style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                  Text("Inhaber: ${paymentInfo['name'] ?? ''}", style: const TextStyle(fontSize: 8)),
+                ] else ...[
+                  Text("E-Mail: ${paymentInfo['email'] ?? ''}", style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                ],
+                const SizedBox(height: 6),
+                const Text("Sekundäre Zahlungsmethode:", style: TextStyle(fontSize: 9, color: Colors.grey)),
+                if (!ibanPref) ...[
+                  Text("IBAN: ${_formatIBAN(paymentInfo['iban'] ?? '')}", style: const TextStyle(fontSize: 8)),
+                ] else ...[
+                  Text("E-Mail: ${paymentInfo['email'] ?? ''}", style: const TextStyle(fontSize: 8)),
+                ],
               ],
             ),
           ),
-          const SizedBox(height: 15),
+          const SizedBox(height: 12),
           Table(
             columnWidths: const {0: FlexColumnWidth(3), 1: FlexColumnWidth(1)},
-            border: TableBorder.all(color: Colors.grey[300]!),
+            border: TableBorder.all(color: Colors.grey[200]!),
             children: [
               TableRow(
                 decoration: BoxDecoration(color: Colors.green[50]),
                 children: [
-                  const Padding(padding: EdgeInsets.all(8), child: Text("Name", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
-                  const Padding(padding: EdgeInsets.all(8), child: Text("Betrag", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                  const Padding(padding: EdgeInsets.all(6), child: Text("Name", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                  const Padding(padding: EdgeInsets.all(6), child: Text("Betrag", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
                 ],
               ),
               ...sorted.map((p) {
                 double bal = _calculateBalance(p.id, transactions, penaltyFilter: _selectedPenaltyFilter);
                 return TableRow(
                   children: [
-                    Padding(padding: const EdgeInsets.all(8), child: Text(p.name, style: const TextStyle(fontSize: 11))),
+                    Padding(padding: const EdgeInsets.all(6), child: Text(p.name, style: const TextStyle(fontSize: 10))),
                     Padding(
-                      padding: const EdgeInsets.all(8), 
+                      padding: const EdgeInsets.all(6), 
                       child: Text(
                         "${bal.toStringAsFixed(2).replaceAll('.', ',')} €",
-                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: bal < 0 ? Colors.red : (bal > 0 ? Colors.green : Colors.black)),
+                        style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: bal < 0 ? Colors.red : (bal > 0 ? Colors.green : Colors.black)),
                       )
                     ),
                   ],
@@ -707,8 +740,8 @@ class _KassePageState extends State<KassePage> {
     double total = history.fold(0.0, (sum, t) => sum + t.amount);
 
     Widget tableWidget = Container(
-      width: 400,
-      padding: const EdgeInsets.all(20),
+      width: 350,
+      padding: const EdgeInsets.all(15),
       color: Colors.white,
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -716,27 +749,27 @@ class _KassePageState extends State<KassePage> {
         children: [
           Text("Historie: ${p.name}", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.green[800])),
           if (penaltyFilter != null)
-            Text("Filter: $penaltyFilter", style: const TextStyle(fontSize: 12, color: Colors.green, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 15),
+            Text("Filter: $penaltyFilter", style: const TextStyle(fontSize: 11, color: Colors.green, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 12),
           Table(
             columnWidths: const {0: FlexColumnWidth(1), 1: FlexColumnWidth(2), 2: FlexColumnWidth(1)},
-            border: TableBorder.all(color: Colors.grey[300]!),
+            border: TableBorder.all(color: Colors.grey[200]!),
             children: [
               TableRow(
                 decoration: BoxDecoration(color: Colors.green[50]),
                 children: [
-                  const Padding(padding: EdgeInsets.all(8), child: Text("Datum", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 10))),
-                  const Padding(padding: EdgeInsets.all(8), child: Text("Beschreibung", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 10))),
-                  const Padding(padding: EdgeInsets.all(8), child: Text("Betrag", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 10))),
+                  const Padding(padding: EdgeInsets.all(6), child: Text("Datum", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 9))),
+                  const Padding(padding: EdgeInsets.all(6), child: Text("Beschreibung", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 9))),
+                  const Padding(padding: EdgeInsets.all(6), child: Text("Betrag", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 9))),
                 ],
               ),
               ...history.map((t) => TableRow(
                 children: [
-                  Padding(padding: const EdgeInsets.all(8), child: Text(DateFormat('dd.MM.yy').format(t.date), style: const TextStyle(fontSize: 9))),
-                  Padding(padding: const EdgeInsets.all(8), child: Text(t.description, style: const TextStyle(fontSize: 9))),
+                  Padding(padding: const EdgeInsets.all(6), child: Text(DateFormat('dd.MM.yy').format(t.date), style: const TextStyle(fontSize: 8))),
+                  Padding(padding: const EdgeInsets.all(6), child: Text(t.description, style: const TextStyle(fontSize: 8))),
                   Padding(
-                    padding: const EdgeInsets.all(8), 
-                    child: Text("${t.amount.toStringAsFixed(2).replaceAll('.', ',')} €", style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: t.amount < 0 ? Colors.red : Colors.green))
+                    padding: const EdgeInsets.all(6), 
+                    child: Text("${t.amount.toStringAsFixed(2).replaceAll('.', ',')} €", style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: t.amount < 0 ? Colors.red : Colors.green))
                   ),
                 ],
               )),
@@ -744,10 +777,10 @@ class _KassePageState extends State<KassePage> {
                 decoration: BoxDecoration(color: Colors.grey[50]),
                 children: [
                   const SizedBox(),
-                  const Padding(padding: EdgeInsets.all(8), child: Text("Gesamt", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 10))),
+                  const Padding(padding: EdgeInsets.all(6), child: Text("Gesamt", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 9))),
                   Padding(
-                    padding: const EdgeInsets.all(8), 
-                    child: Text("${total.toStringAsFixed(2).replaceAll('.', ',')} €", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11))
+                    padding: const EdgeInsets.all(6), 
+                    child: Text("${total.toStringAsFixed(2).replaceAll('.', ',')} €", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 10))
                   ),
                 ],
               ),
@@ -761,11 +794,11 @@ class _KassePageState extends State<KassePage> {
   }
 
   void _captureAndShare(Widget widget, String filename) async {
-    // Smaller widget with high pixel ratio for "zoomable" crispness
+    // Ultra-High-Def logic: small layout, huge pixel ratio
     final Uint8List? imageBytes = await _screenshotController.captureFromWidget(
       Material(child: widget),
       context: context,
-      pixelRatio: 4.0, // High-def DPI
+      pixelRatio: 4.5, // Crisp enough for extreme zooming
     );
 
     if (imageBytes != null) {
@@ -855,11 +888,11 @@ class _KassePageState extends State<KassePage> {
                         }
 
                         final paymentInfo = paymentSnap.data!;
+                        final ibanPref = paymentInfo['preferred'] == 'iban';
                         
                         var filteredPeople = peopleSnap.data!
                           ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
                         
-                        // ONLY name search should hide people from the main list view
                         if (_searchQuery.isNotEmpty) {
                           filteredPeople = filteredPeople.where((p) => p.name.toLowerCase().contains(_searchQuery.toLowerCase())).toList();
                         }
@@ -896,9 +929,21 @@ class _KassePageState extends State<KassePage> {
                                         ],
                                       ),
                                       const Divider(),
-                                      _buildInfoRow('IBAN', _formatIBAN(paymentInfo['iban'] ?? ''), isIban: true),
-                                      _buildInfoRow('Name', paymentInfo['name'] ?? ''),
-                                      _buildInfoRow('E-Mail', paymentInfo['email'] ?? ''),
+                                      const Text('Präferierte Zahlungsmethode:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                      if (ibanPref) 
+                                        _buildInfoRow('IBAN', _formatIBAN(paymentInfo['iban'] ?? ''), isIban: true, isBold: true)
+                                      else
+                                        _buildInfoRow('E-Mail', paymentInfo['email'] ?? '', isBold: true),
+                                      
+                                      const SizedBox(height: 8),
+                                      const Text('Sekundäre Zahlungsmethode:', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                                      if (!ibanPref)
+                                        _buildInfoRow('IBAN', _formatIBAN(paymentInfo['iban'] ?? ''), isIban: true)
+                                      else
+                                        _buildInfoRow('E-Mail', paymentInfo['email'] ?? ''),
+                                      
+                                      if (ibanPref && paymentInfo['name'] != null)
+                                        Text('Inhaber: ${paymentInfo['name']}', style: const TextStyle(fontSize: 12)),
                                     ],
                                   ),
                                 ),
@@ -1069,17 +1114,19 @@ class _KassePageState extends State<KassePage> {
     return RichText(text: TextSpan(children: spans, style: const TextStyle(color: Colors.black, fontSize: 16)));
   }
 
-  Widget _buildInfoRow(String label, String value, {bool isIban = false}) {
+  Widget _buildInfoRow(String label, String value, {bool isIban = false, bool isBold = false}) {
     if (value.isEmpty) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      padding: const EdgeInsets.symmetric(vertical: 2.0),
       child: Row(
         children: [
-          Expanded(child: Text('$label: $value', style: const TextStyle(fontSize: 14))),
+          Expanded(child: Text('$label: $value', style: TextStyle(fontSize: 14, fontWeight: isBold ? FontWeight.bold : FontWeight.normal))),
           IconButton(
             icon: const Icon(Icons.copy, size: 18),
             onPressed: () => _copyToClipboard(value, label, cleanSpaces: isIban),
             tooltip: '$label kopieren',
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
           ),
         ],
       ),
@@ -1316,7 +1363,6 @@ class _KassePageState extends State<KassePage> {
   void _showHistory(BuildContext context, Person person, List<AppTransaction> transactions) {
     var history = transactions.where((t) => t.personId == person.id).toList();
     
-    // Apply penalty filter if active
     if (_selectedPenaltyFilter != null) {
       history = history.where((t) => t.description == _selectedPenaltyFilter).toList();
     }

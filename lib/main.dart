@@ -603,8 +603,12 @@ class _KassePageState extends State<KassePage> {
     var sorted = List<Person>.from(people)..sort((a,b) => a.name.compareTo(b.name));
     bool ibanPref = paymentInfo['preferred'] == 'iban';
     
+    // Explicit Height Logic: Header(180) + Rows(each 35) + Buffer(20)
+    double calculatedHeight = 180 + (sorted.length * 35) + 20;
+
     Widget tableWidget = Container(
-      width: 350, // Ultra-compact for layout safety
+      width: 350, 
+      height: calculatedHeight, // Forced height
       padding: const EdgeInsets.all(15),
       color: Colors.white,
       child: Column(
@@ -739,9 +743,13 @@ class _KassePageState extends State<KassePage> {
     }
     
     double total = history.fold(0.0, (sum, t) => sum + t.amount);
+    
+    // Explicit Height Logic for History
+    double calculatedHeight = 100 + (history.length * 30) + 50;
 
     Widget tableWidget = Container(
       width: 350,
+      height: calculatedHeight,
       padding: const EdgeInsets.all(15),
       color: Colors.white,
       child: Column(
